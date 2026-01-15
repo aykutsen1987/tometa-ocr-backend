@@ -1,11 +1,6 @@
 services:
   - type: web
     name: tometa-ocr
-    env: docker  # <--- Burası 'node' yerine 'docker' oldu
+    env: docker
     plan: free
-    region: frankfurt # Türkiye'ye en yakın lokasyon
-    buildCommand: |
-      apt-get update
-      apt-get install -y tesseract-ocr tesseract-ocr-tur tesseract-ocr-eng poppler-utils libvips-dev
-      npm install
-    startCommand: node index.js
+    region: frankfurt
