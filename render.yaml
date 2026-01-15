@@ -1,7 +1,7 @@
 services:
   - type: web
     name: tometa-ocr
-    env: node
+    env: docker
     plan: free
     buildCommand: |
       apt-get update
