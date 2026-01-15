@@ -19,24 +19,45 @@ app.get("/", (req, res) => {
  */
 app.post("/ocr", upload.single("file"), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "PDF missing" });
-    }
+    if (!req.file) return res.status(400).json({ error: "PDF missing" });
 
     const pdfPath = req.file.path;
-    const imgPrefix = `/tmp/output_${Date.now()}`;
-    const textOutput = `${imgPrefix}.txt`;
+    const timestamp = Date.now();
+    const rawImgPrefix = `/tmp/raw_${timestamp}`;
+    const processedImgPrefix = `/tmp/proc_${timestamp}`;
+    const textOutput = `/tmp/result_${timestamp}`;
 
-    // 1️⃣ PDF → PNG
-    const pdfToImgCmd = `pdftoppm -png ${pdfPath} ${imgPrefix}`;
+    // 1️⃣ PDF → Yüksek Kaliteli PNG (300 DPI)
+    // -r 300: Çözünürlüğü 300 DPI yapar (Kritik!)
+    const pdfToImgCmd = `pdftoppm -png -r 300 ${pdfPath} ${rawImgPrefix}`;
     await execPromise(pdfToImgCmd);
 
-    // 2️⃣ OCR (Tesseract tüm sayfalar)
-    const ocrCmd = `tesseract ${imgPrefix}-*.png ${imgPrefix} -l tur+eng`;
+    // 2️⃣ Görüntü İyileştirme (Sharp ile)
+    // Oluşan tüm sayfaları gez ve optimize et
+    const files = fs.readdirSync("/tmp").filter(f => f.startsWith(`raw_${timestamp}-`) && f.endsWith(".png"));
+    
+    for (const file of files) {
+      const inputPath = path.join("/tmp", file);
+      const outputPath = path.join("/tmp", `optimized_${file}`);
+      
+      await sharp(inputPath)
+        .grayscale()      // Gri tonlama
+        .normalize()      // Kontrastı otomatik yayar
+        .sharpen()        // Harf kenarlarını keskinleştirir
+        .toFile(outputPath);
+    }
+
+    // 3️⃣ OCR (Tesseract Gelişmiş Parametreler)
+    // -l tur+eng: Çift dil desteği
+    // --oem 3: Default + LSTM (en iyisi)
+    // --psm 6: Tek bir blok metin olarak oku (Sayfa düzenini korur)
+    const ocrCmd = `tesseract /tmp/optimized_raw_${timestamp}-*.png ${textOutput} -l tur+eng --oem 3 --psm 6`;
     await execPromise(ocrCmd);
 
-    const text = fs.readFileSync(textOutput, "utf8");
+    const text = fs.readFileSync(`${textOutput}.txt`, "utf8");
 
+    // Temizlik: Geçici dosyaları silebilirsin (opsiyonel)
+    
     res.json({
       status: "ok",
       text
@@ -46,17 +67,4 @@ app.post("/ocr", upload.single("file"), async (req, res) => {
     console.error("OCR error:", err);
     res.status(500).json({ error: "OCR failed" });
   }
-});
-
-function execPromise(cmd) {
-  return new Promise((resolve, reject) => {
-    exec(cmd, (err) => {
-      if (err) reject(err);
-      else resolve();
-    });
-  });
-}
-
-app.listen(PORT, () => {
-  console.log("🚀 ToMeta OCR server running on port", PORT);
 });
