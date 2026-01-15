@@ -4,50 +4,92 @@ import { exec } from "child_process";
 import fs from "fs";
 import path from "path";
 import sharp from "sharp";
-import { Document, Packer, Paragraph, TextRun } from "docx"; // Aşama 3 Paketleri
+import { Document, Packer, Paragraph, TextRun } from "docx";
+import pdf from "pdf-parse"; // Aşama 4: Dijital metin ayıklama
 
 const app = express();
 const upload = multer({ dest: "/tmp/uploads" });
 const PORT = process.env.PORT || 3000;
 
-// Gerekli klasörlerin varlığından emin olalım
+// Gerekli klasörleri oluştur
 const dirs = ["/tmp/uploads", "/tmp/output"];
 dirs.forEach(dir => {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
 app.get("/", (req, res) => {
-    res.send("✅ ToMeta OCR & DOCX Server is running - Phase 3 Stable");
+    res.send("✅ ToMeta Smart OCR & DOCX Server is running - Phase 4");
 });
 
 /**
- * AŞAMA 2 & 3: PDF -> IMAGE -> OCR -> DOCX
+ * YARDIMCI FONKSİYON: DOCX OLUŞTURMA
+ */
+async function generateDocxFile(text, timestamp) {
+    const paragraphs = text.split("\n").map(line => {
+        return new Paragraph({
+            children: [new TextRun({ text: line.trim(), size: 24, font: "Calibri" })]
+        });
+    });
+
+    const doc = new Document({
+        sections: [{ children: paragraphs }]
+    });
+
+    const docxFilename = `ToMeta_OCR_${timestamp}.docx`;
+    const docxPath = `/tmp/output/${docxFilename}`;
+    const buffer = await Packer.toBuffer(doc);
+    fs.writeFileSync(docxPath, buffer);
+    return docxFilename;
+}
+
+/**
+ * ANA ENDPOINT: /ocr
  */
 app.post("/ocr", upload.single("file"), async (req, res) => {
     let tempFiles = [];
-    
+    const timestamp = Date.now();
+
     try {
         if (!req.file) return res.status(400).json({ error: "PDF missing" });
 
         const pdfPath = req.file.path;
-        const timestamp = Date.now();
-        const rawImgPrefix = `/tmp/raw_${timestamp}`;
-        const textOutputBase = `/tmp/result_${timestamp}`;
-        const docxFilename = `ToMeta_OCR_${timestamp}.docx`;
-        const docxPath = `/tmp/output/${docxFilename}`;
-        
         tempFiles.push(pdfPath);
 
-        // 1️⃣ PDF → PNG (DPI 300)
-        console.log("1. Converting PDF to Image...");
+        // --- AŞAMA 4: AKILLI FALLBACK (Dijital Metin Kontrolü) ---
+        console.log("Checking for digital text...");
+        const dataBuffer = fs.readFileSync(pdfPath);
+        const pdfData = await pdf(dataBuffer);
+
+        // Eğer PDF'de anlamlı miktarda metin varsa direkt işle
+        if (pdfData.text && pdfData.text.trim().length > 20) {
+            console.log("Digital text detected. Skipping OCR...");
+            const docxName = await generateDocxFile(pdfData.text, timestamp);
+            
+            return res.json({
+                status: "ok",
+                source: "digital",
+                text: pdfData.text,
+                docxUrl: `${req.protocol}://${req.get('host')}/download/${docxName}`
+            });
+        }
+
+        // --- AŞAMA 2: OCR SÜRECİ (Eğer metin yoksa buraya geçer) ---
+        console.log("No digital text. Starting OCR Pipeline...");
+        const rawImgPrefix = `/tmp/raw_${timestamp}`;
+        const textOutputBase = `/tmp/result_${timestamp}`;
+
+        // 1. PDF -> PNG (300 DPI)
         await execPromise(`pdftoppm -png -r 300 ${pdfPath} ${rawImgPrefix}`);
 
-        // Oluşan sayfaları yakala
-        const files = fs.readdirSync("/tmp").filter(f => f.startsWith(`raw_${timestamp}-`) && f.endsWith(".png")).sort();
-        if (files.length === 0) throw new Error("PDF could not be converted to images.");
+        // Sayfaları bul ve sırala
+        const files = fs.readdirSync("/tmp")
+            .filter(f => f.startsWith(`raw_${timestamp}-`) && f.endsWith(".png"))
+            .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
-        // 2️⃣ GÖRÜNTÜ OPTİMİZASYONU (Sharp)
-        console.log("2. Optimizing images for OCR...");
+        if (files.length === 0) throw new Error("Could not convert PDF to images.");
+
+        // 2. Görüntü İyileştirme (Sharp)
+        console.log(`Processing ${files.length} pages...`);
         for (const file of files) {
             const inputPath = path.join("/tmp", file);
             const outputPath = path.join("/tmp", `opt_${file}`);
@@ -61,56 +103,45 @@ app.post("/ocr", upload.single("file"), async (req, res) => {
             tempFiles.push(inputPath, outputPath);
         }
 
-        // 3️⃣ OCR İŞLEMİ (Tesseract)
-        console.log("3. Starting Tesseract OCR...");
+        // 3. Tesseract OCR (Aşama 2.3 Parametreleri)
+        console.log("Running Tesseract...");
         const ocrCmd = `tesseract /tmp/opt_raw_${timestamp}-*.png ${textOutputBase} -l tur+eng --oem 3 --psm 6`;
         await execPromise(ocrCmd);
         
-        const rawText = fs.readFileSync(`${textOutputBase}.txt`, "utf8");
+        const ocrText = fs.readFileSync(`${textOutputBase}.txt`, "utf8");
         tempFiles.push(`${textOutputBase}.txt`);
 
-        // 4️⃣ DOCX ÜRETİMİ (Aşama 3)
-        console.log("4. Generating DOCX file...");
-        const paragraphs = rawText.split("\n").map(line => {
-            return new Paragraph({
-                children: [new TextRun({ text: line.trim(), size: 24, font: "Calibri" })]
-            });
-        });
+        // 4. DOCX Üretimi
+        const docxName = await generateDocxFile(ocrText, timestamp);
 
-        const doc = new Document({
-            sections: [{ children: paragraphs }]
-        });
-
-        const buffer = await Packer.toBuffer(doc);
-        fs.writeFileSync(docxPath, buffer);
-
-        // 5️⃣ YANIT GÖNDERME
+        // 5. Yanıt
         res.json({
             status: "ok",
-            text: rawText,
-            docxUrl: `${req.protocol}://${req.get('host')}/download/${docxFilename}`
+            source: "ocr",
+            text: ocrText,
+            docxUrl: `${req.protocol}://${req.get('host')}/download/${docxName}`
         });
 
-        // Arka planda geçici resim ve txt dosyalarını temizle
+        // Temizlik
         setTimeout(() => {
             tempFiles.forEach(f => { if (fs.existsSync(f)) fs.unlinkSync(f); });
-        }, 5000);
+        }, 10000);
 
     } catch (err) {
-        console.error("OCR/DOCX Error:", err.message);
+        console.error("Critical Error:", err.message);
         res.status(500).json({ error: "Process failed", details: err.message });
     }
 });
 
 /**
- * DOSYA İNDİRME ENDPOINT'İ
+ * DOSYA İNDİRME
  */
 app.get("/download/:filename", (req, res) => {
     const filePath = path.join("/tmp/output", req.params.filename);
     if (fs.existsSync(filePath)) {
         res.download(filePath);
-        // İndirildikten 1 dakika sonra dosyayı sunucudan sil (Disk dolmasın)
-        setTimeout(() => { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); }, 60000);
+        // İndirmeden 2 dakika sonra sunucudan kaldır
+        setTimeout(() => { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); }, 120000);
     } else {
         res.status(404).send("File expired or not found.");
     }
@@ -125,4 +156,4 @@ function execPromise(cmd) {
     });
 }
 
-app.listen(PORT, () => console.log(`🚀 ToMeta Server is live on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 ToMeta Server live on port ${PORT}`));
