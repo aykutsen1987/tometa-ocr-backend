@@ -1,3 +1,12 @@
+// index.js en üstüne ekle
+process.on('uncaughtException', (err) => {
+    console.error('Beklenmedik Hata:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Yakalanmamış Rejection:', reason);
+});
+
 import express from "express";
 import multer from "multer";
 import { exec } from "child_process";
