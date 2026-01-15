@@ -1,7 +1,7 @@
-# Node.js tabanlı resmi imajı kullan
+# 1. Aşama: Temel İmaj
 FROM node:20-slim
 
-# Gerekli sistem paketlerini yükle
+# 2. Aşama: Sistem Paketlerini Kur (Hata vermeyen güvenli alan)
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-tur \
@@ -11,18 +11,12 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Uygulama klasörünü oluştur
+# 3. Aşama: Uygulama Kodları
 WORKDIR /app
-
-# Bağımlılıkları kopyala ve yükle
 COPY package*.json ./
 RUN npm install
-
-# Tüm kodları kopyala
 COPY . .
 
-# Port ayarı
+# 4. Aşama: Başlatma
 EXPOSE 3000
-
-# Uygulamayı başlat
 CMD ["node", "index.js"]
