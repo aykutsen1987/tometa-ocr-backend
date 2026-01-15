@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: tometa-ocr
+    env: node
+    plan: free
+    buildCommand: |
+      apt-get update
+      apt-get install -y tesseract-ocr tesseract-ocr-tur tesseract-ocr-eng poppler-utils
+      npm install
+    startCommand: node index.js
