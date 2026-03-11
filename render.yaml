@@ -1,9 +1,0 @@
-services:
-  - type: web
-    name: tometa-ocr
-    env: docker
-    plan: free
-    region: frankfurt
-    # Paneldeki kutucukları geçersiz kılmak için bunları ekliyoruz:
-    buildCommand: null
-    startCommand: null
