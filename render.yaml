@@ -1,8 +1,15 @@
 services:
   - type: web
     name: tometa-ocr-backend
-    env: docker
+    runtime: docker
     plan: free
     region: frankfurt
-    buildCommand: null
-    startCommand: null
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: APP_SECRET
+        sync: false
+      - key: MAX_PAGES
+        value: "30"          # taranmış PDF'te işlenecek en fazla sayfa
+      - key: OCR_DPI
+        value: "200"         # düşük = hızlı/az bellek, yüksek = daha iyi okuma

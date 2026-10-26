@@ -1,17 +1,17 @@
 FROM node:20-slim
 
-RUN apt-get update && apt-get install -y \
+# libvips-dev gerekmez: sharp kendi hazır libvips'ini getirir (imaj daha küçük, build daha hızlı)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-tur \
     tesseract-ocr-eng \
     poppler-utils \
-    libvips-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+RUN npm install --omit=dev
 COPY . .
 
 EXPOSE 3000
